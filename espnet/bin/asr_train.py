@@ -260,6 +260,11 @@ def get_parser(parser=None, required=True):
                         help='')
     parser.add_argument('--fbank-fmax', type=float, default=None,
                         help='')
+
+    parser.add_argument('--token_dict', type=str, default=None, help='token dictionary path')
+    parser.add_argument('--piny_dict', type=str, default=None, help='piny dictionary path')
+    parser.add_argument('--ngram-dict', type=str, default=None, help='ngram dictionary path')
+
     return parser
 
 

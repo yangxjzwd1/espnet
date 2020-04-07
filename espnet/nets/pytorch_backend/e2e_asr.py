@@ -239,7 +239,7 @@ class E2E(ASRInterface, torch.nn.Module):
         for l in six.moves.range(len(self.dec.decoder)):
             set_forget_bias_to_one(self.dec.decoder[l].bias_ih)
 
-    def forward(self, xs_pad, ilens, ys_pad):
+    def forward(self, xs_pad, ilens, ys_pad, ys_dist):
         """E2E forward.
 
         :param torch.Tensor xs_pad: batch of padded input sequences (B, Tmax, idim)
@@ -268,7 +268,7 @@ class E2E(ASRInterface, torch.nn.Module):
         if self.mtlalpha == 1:
             self.loss_att, acc = None, None
         else:
-            self.loss_att, acc, _ = self.dec(hs_pad, hlens, ys_pad)
+            self.loss_att, acc, _ = self.dec(hs_pad, hlens, ys_pad, ys_dist)
         self.acc = acc
 
         # 4. compute cer without beam search

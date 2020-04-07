@@ -114,7 +114,7 @@ class Decoder(torch.nn.Module, ScorerInterface):
                 z_list[l] = self.decoder[l](self.dropout_dec[l - 1](z_list[l - 1]), z_prev[l])
         return z_list, c_list
 
-    def forward(self, hs_pad, hlens, ys_pad, strm_idx=0, lang_ids=None):
+    def forward(self, hs_pad, hlens, ys_pad, ys_dist, strm_idx=0, lang_ids=None):
         """Decoder forward
 
         :param torch.Tensor hs_pad: batch of padded hidden state sequences (B, Tmax, D)
@@ -249,9 +249,13 @@ class Decoder(torch.nn.Module, ScorerInterface):
                 logging.info("prediction [%d]: " % i + seq_hat)
 
         if self.labeldist is not None:
-            if self.vlabeldist is None:
-                self.vlabeldist = to_device(self, torch.from_numpy(self.labeldist))
-            loss_reg = - torch.sum((F.log_softmax(y_all, dim=1) * self.vlabeldist).view(-1), dim=0) / len(ys_in)
+            if piny_dist is not None:
+                piny_dist = to_device(self, torch.from_numpy(piny_dist))
+                loss_reg = - torch.sum((F.log_softmax(y_all, dim=1) * piny_dist).view(-1), dim=0) / len(ys_in)
+            else:
+                if self.vlabeldist is None:
+                    self.vlabeldist = to_device(self, torch.from_numpy(self.labeldist))
+                loss_reg = - torch.sum((F.log_softmax(y_all, dim=1) * self.vlabeldist).view(-1), dim=0) / len(ys_in)            
             self.loss = (1. - self.lsm_weight) * self.loss + self.lsm_weight * loss_reg
 
         return self.loss, acc, ppl

@@ -235,11 +235,100 @@ class CustomConverter(object):
 
     """
 
-    def __init__(self, subsampling_factor=1, dtype=torch.float32):
+    def __init__(self, token_dict, pin_dict, labeldist, subsampling_factor=1, dtype=torch.float32):
         """Construct a CustomConverter object."""
         self.subsampling_factor = subsampling_factor
         self.ignore_id = -1
         self.dtype = dtype
+        
+        with open(token_dict, 'r') as f:
+            dictlist = f.readlines()
+        self.token_map = {}
+        for wd in dictlist:
+            wd = wd.split()
+            token = wd[0]
+            tokenid = wd[1]
+            self.token_map[tokenid] = token
+
+        self.pin_dict = {}
+        if pin_dict is not None:
+            with open(pin_dict, 'r') as f:
+                pinstrs = f.readlines()
+            for pinstr in pinstrs:
+                pinstr = pinstr.split()
+                self.pin_dict[pinstr[0]] = [id for id in map(int, pinstr[1:])]
+        else:
+            self.pin_dict = None
+        self.labeldist = labeldist
+        
+    def ys_topinyin(tokenlist):
+        tokenstr = ''
+        for tokenid in tokenlist:
+            if tokenid in token_map:
+                tokenstr += token_map[tokenid]
+            else:
+                tokenstr += 'b'
+        token_pin = pinyin(tokenstr, style=Style.TONE3)
+        pin_str = ''
+        for pin in token_pin:
+            if len(pin[0]) >= 2 and pin[0][:2] == 'bb':
+                for blank in pin[0]:
+                    pin_str += (blank + ' ')
+            else:
+                pin_str += (pin[0] + ' ')
+        pin_str = pin_str[:-1]
+
+        if len(tokenlist) != len(pin_str.split()):
+            raise ValueError("tokenlist not equal pinyin")
+        return pin_str
+        
+    def ys_todist(self, ys, max_ylen):
+        try:
+            if len(self.pin_dict) > 0:
+                #need add eos
+                piny_dist = np.zeros((max_ylen+1)*len(ys),  self.labeldist.shape[0], dtype=np.float32) + self.labeldist
+                for uttid in range(len(ys)):
+                    ys_pinyin = self.ys_topinyin(ys[uttid]).split()
+                    for yidx in range(ys[uttid].shape[0]):
+                        tokenid = ys[uttid][yidx]
+                        piny = ys_pinyin[yidx]
+                        if piny not in self.pin_dict:
+                            continue
+                        piny_tokenlist = self.pin_dict[piny]
+                        if len(piny_tokenlist) <= 1:
+                            continue
+    
+                        #blank is zero
+                        token_dist = np.full(self.labeldist.shape[0], (1.0 - self.pin_resdist)/(self.labeldist.shape[0]-len(piny_tokenlist) - 1),dtype=np.float32)
+                        token_dist[0] = 0
+                        token_dist[piny_tokenlist] = (self.pin_resdist - 0.6)/ (len(piny_tokenlist) - 1)
+                        token_dist[tokenid] = 0.6
+                        piny_dist[uttid*max_ylen + yidx] = token_dist
+            else:
+                piny_dist = None
+        except IndexError:
+            logging.warning('Invalid pinyin {}'.format(ys[uttid]))
+            logging.warning(notexist)
+        return piny_dist
+
+    def ngram_todist(self, ys, max_ylen):
+        try:
+             #need add eos
+             dist = np.zeros(((max_ylen+1)*len(ys), self.labeldist.shape[0]), dtype=np.float32) + self.labeldist
+             for uttid in range(len(ys)):
+                # init sos
+                 pre_id = self.labeldist.shape[0] - 1
+                 for yidx in range(ys[uttid].shape[0]):
+                     tokenid = ys[uttid][yidx]
+                     dist[uttid*max_ylen + yidx] = self.ngram_dist[pre_id]
+                     pre_id = tokenid
+                 # last word
+                 dist[uttid*max_ylen + ys[uttid].shape[0]] = self.ngram_dist[ys[uttid][-1]]
+        except IndexError:
+            logging.warning(uttid)
+            logging.warning(yidx)
+            logging.warning(notexist)
+        return dist
 
     def __call__(self, batch, device=torch.device('cpu')):
         """Transform a batch and send it to a device.
@@ -283,7 +372,14 @@ class CustomConverter(object):
         ys_pad = pad_list([torch.from_numpy(np.array(y[0][:]) if isinstance(y, tuple) else y).long()
                            for y in ys], self.ignore_id).to(device)
 
-        return xs_pad, ilens, ys_pad
+        if self.piny_dict is not None:
+            ys_dist = self.ys_todist(ys, ys_pad.size(1))
+        elif self.ngram_dist is not None:
+            dist = self.ngram_todist(ys, ys_pad.size(1))
+        else:
+            ys_dist = None
+        
+        return xs_pad, ilens, ys_pad, ys_dist
 
 
 class CustomConverterMulEnc(object):
@@ -456,7 +552,7 @@ def train(args):
 
     # Setup a converter
     if args.num_encs == 1:
-        converter = CustomConverter(subsampling_factor=model.subsample[0], dtype=dtype)
+        converter = CustomConverter(args.token_dict, args.piny_dict, model.labeldist, subsampling_factor=model.subsample[0], dtype=dtype)
     else:
         converter = CustomConverterMulEnc([i[0] for i in model.subsample_list], dtype=dtype)
 
