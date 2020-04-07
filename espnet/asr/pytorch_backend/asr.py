@@ -304,14 +304,33 @@ class CustomConverter(object):
                         token_dist[0] = 0
                         token_dist[piny_tokenlist] = (self.pin_resdist - 0.6)/ (len(piny_tokenlist) - 1)
                         token_dist[tokenid] = 0.6
-                        piny_dist[uttid*max_ylen + yidx] = 0.5 * piny_dist[uttid*max_ylen + yidx] + 0.5 * token_dist
+                        piny_dist[uttid*max_ylen + yidx] = token_dist
             else:
                 piny_dist = None
         except IndexError:
             logging.warning('Invalid pinyin {}'.format(ys[uttid]))
             logging.warning(notexist)
         return piny_dist
-        
+
+    def ngram_todist(self, ys, max_ylen):
+        try:
+             #need add eos
+             dist = np.zeros(((max_ylen+1)*len(ys), self.labeldist.shape[0]), dtype=np.float32) + self.labeldist
+             for uttid in range(len(ys)):
+                # init sos
+                 pre_id = self.labeldist.shape[0] - 1
+                 for yidx in range(ys[uttid].shape[0]):
+                     tokenid = ys[uttid][yidx]
+                     dist[uttid*max_ylen + yidx] = self.ngram_dist[pre_id]
+                     pre_id = tokenid
+                 # last word
+                 dist[uttid*max_ylen + ys[uttid].shape[0]] = self.ngram_dist[ys[uttid][-1]]
+        except IndexError:
+            logging.warning(uttid)
+            logging.warning(yidx)
+            logging.warning(notexist)
+        return dist
+
     def __call__(self, batch, device=torch.device('cpu')):
         """Transform a batch and send it to a device.
 
@@ -356,6 +375,8 @@ class CustomConverter(object):
 
         if self.piny_dict is not None:
             ys_dist = self.ys_todist(ys, ys_pad.size(1))
+        elif self.ngram_dist is not None:
+            dist = self.ngram_todist(ys, ys_pad.size(1))
         else:
             ys_dist = None
         
